@@ -4,7 +4,7 @@ using static sharp_potato.Secur32.Native;
 
 namespace sharp_potato;
 
-public unsafe class LocalNegotiator
+public class LocalNegotiator
 {
     public int AuthResult { get; set; } = -1;
     public Vanara.PInvoke.Secur32.CtxtHandle Context => context;
@@ -15,7 +15,7 @@ public unsafe class LocalNegotiator
     private SecBuffer secServerBuffer;
     private Vanara.PInvoke.Secur32.CtxtHandle context;
 
-    public byte[] HandleType1(byte* data, int length)
+    public IEnumerable<byte> HandleType1(byte[] data)
     {
         var result = AcquireCredentialsHandle(null, "Negotiate", SECPKG_CRED_INBOUND, IntPtr.Zero,
             IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out var credential, out _);
@@ -26,10 +26,7 @@ public unsafe class LocalNegotiator
             return null;
         }
 
-        var tempData = new byte[length];
-        Marshal.Copy((IntPtr) data, tempData, 0, length);
-
-        secClientBuffer = new SecBuffer(tempData, SecBufferType.SECBUFFER_TOKEN);
+        secClientBuffer = new SecBuffer(data, SecBufferType.SECBUFFER_TOKEN);
         secClientBufferDesc = new SecBufferDesc(secClientBuffer);
 
         secServerBuffer = new SecBuffer {BufferType = (uint) SecBufferType.SECBUFFER_TOKEN};
@@ -43,19 +40,19 @@ public unsafe class LocalNegotiator
         secServerBuffer = new SecBuffer(secServerBufferDesc.GetBufferBytes(0), SecBufferType.SECBUFFER_TOKEN);
         secServerBufferDesc = new SecBufferDesc(secClientBuffer);
 
-        return null;
+        return data;
     }
 
-    public byte[] HandleType2(byte* data, int length)
+    public IEnumerable<byte> HandleType2(byte[] data)
     {
         var newNtlmBytes = new byte[secServerBuffer.cbBuffer];
 
         if (secServerBuffer.pvBuffer != IntPtr.Zero && secServerBuffer.cbBuffer != 0)
             Marshal.Copy(secServerBuffer.pvBuffer, newNtlmBytes, 0, (int) secServerBuffer.cbBuffer);
 
-        if (length >= secServerBuffer.cbBuffer)
+        if (data.Length >= secServerBuffer.cbBuffer)
         {
-            for (int i = 0; i < length; i++)
+            for (int i = 0; i < data.Length; i++)
             {
                 if (i < secServerBuffer.cbBuffer)
                     data[i] = newNtlmBytes[i];
@@ -68,15 +65,12 @@ public unsafe class LocalNegotiator
             Console.WriteLine("Buffer sizes incompatible - can't replace");
         }
 
-        return null;
+        return data;
     }
 
-    public byte[] HandleType3(byte* data, int length)
+    public IEnumerable<byte> HandleType3(byte[] data)
     {
-        var tempData = new byte[length];
-        Marshal.Copy((IntPtr) data, tempData, 0, length);
-
-        secClientBuffer = new SecBuffer(tempData, SecBufferType.SECBUFFER_TOKEN);
+        secClientBuffer = new SecBuffer(data, SecBufferType.SECBUFFER_TOKEN);
         secClientBufferDesc = new SecBufferDesc(secClientBuffer);
 
         secServerBuffer = new SecBuffer {BufferType = (uint) SecBufferType.SECBUFFER_TOKEN};
@@ -85,6 +79,6 @@ public unsafe class LocalNegotiator
         AuthResult = (int) AcceptSecurityContext(ref context, ref context, ref secClientBufferDesc, ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_CONNECTION,
             SECURITY_NATIVE_DREP, ref context, ref secServerBufferDesc, out _, out _);
 
-        return null;
+        return data;
     }
 }

