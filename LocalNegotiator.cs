@@ -15,15 +15,15 @@ public unsafe class LocalNegotiator
     private SecBuffer secServerBuffer;
     private Vanara.PInvoke.Secur32.CtxtHandle context;
 
-    public int HandleType1(byte* data, int length)
+    public byte[] HandleType1(byte* data, int length)
     {
         var result = AcquireCredentialsHandle(null, "Negotiate", SECPKG_CRED_INBOUND, IntPtr.Zero,
-            IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out var credential, out var expiry);
+            IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out var credential, out _);
 
         if (result != SEC_E_OK)
         {
             Console.Out.WriteLine("Error in AcquireCredentialsHandle");
-            return -1;
+            return null;
         }
 
         var tempData = new byte[length];
@@ -43,10 +43,10 @@ public unsafe class LocalNegotiator
         secServerBuffer = new SecBuffer(secServerBufferDesc.GetBufferBytes(0), SecBufferType.SECBUFFER_TOKEN);
         secServerBufferDesc = new SecBufferDesc(secClientBuffer);
 
-        return (int) result;
+        return null;
     }
 
-    public int HandleType2(byte* data, int length)
+    public byte[] HandleType2(byte* data, int length)
     {
         var newNtlmBytes = new byte[secServerBuffer.cbBuffer];
 
@@ -68,10 +68,10 @@ public unsafe class LocalNegotiator
             Console.WriteLine("Buffer sizes incompatible - can't replace");
         }
 
-        return 0;
+        return null;
     }
 
-    public int HandleType3(byte* data, int length)
+    public byte[] HandleType3(byte* data, int length)
     {
         var tempData = new byte[length];
         Marshal.Copy((IntPtr) data, tempData, 0, length);
@@ -85,6 +85,6 @@ public unsafe class LocalNegotiator
         AuthResult = (int) AcceptSecurityContext(ref context, ref context, ref secClientBufferDesc, ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_CONNECTION,
             SECURITY_NATIVE_DREP, ref context, ref secServerBufferDesc, out _, out _);
 
-        return AuthResult;
+        return null;
     }
 }

