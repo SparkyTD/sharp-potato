@@ -15,12 +15,6 @@ public unsafe class LocalNegotiator
     private SecBuffer secServerBuffer;
     private Vanara.PInvoke.Secur32.CtxtHandle context;
 
-    private static void InitTokenContextBuffer(out SecBufferDesc secBufferDesc, out SecBuffer secBuffer)
-    {
-        secBuffer = new SecBuffer(Array.Empty<byte>(), SecBufferType.SECBUFFER_TOKEN);
-        secBufferDesc = new SecBufferDesc(secBuffer);
-    }
-
     public int HandleType1(byte* data, int length)
     {
         var result = AcquireCredentialsHandle(null, "Negotiate", SECPKG_CRED_INBOUND, IntPtr.Zero,
@@ -28,12 +22,9 @@ public unsafe class LocalNegotiator
 
         if (result != SEC_E_OK)
         {
-            Console.Out.WriteLine("Error in AquireCredentialsHandle");
+            Console.Out.WriteLine("Error in AcquireCredentialsHandle");
             return -1;
         }
-
-        //InitTokenContextBuffer(out secClientBufferDesc, out secClientBuffer);
-        //InitTokenContextBuffer(out secServerBufferDesc, out secServerBuffer);
 
         var tempData = new byte[length];
         Marshal.Copy((IntPtr) data, tempData, 0, length);
@@ -46,19 +37,12 @@ public unsafe class LocalNegotiator
 
         context = new Vanara.PInvoke.Secur32.CtxtHandle();
 
-        Console.WriteLine($"  >> [PRE/C] secServerBuffer.pvBuffer[{secClientBuffer.cbBuffer}] == nullptr: {(secClientBuffer.pvBuffer == IntPtr.Zero ? "YES" : "NO")}");
-        Console.WriteLine($"  >> [PRE] secServerBuffer.pvBuffer[{secServerBuffer.cbBuffer}] == nullptr: {(secServerBuffer.pvBuffer == IntPtr.Zero ? "YES" : "NO")}");
-
         result = AcceptSecurityContext(ref credential, IntPtr.Zero, ref secClientBufferDesc, ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_CONNECTION,
             SECURITY_NATIVE_DREP, ref context, ref secServerBufferDesc, out _, out _);
 
         secServerBuffer = new SecBuffer(secServerBufferDesc.GetBufferBytes(0), SecBufferType.SECBUFFER_TOKEN);
         secServerBufferDesc = new SecBufferDesc(secClientBuffer);
 
-        Console.WriteLine(
-            $"  >> [POST] secServerBuffer.pvBuffer[{secServerBuffer.cbBuffer}/{secServerBufferDesc.GetBufferBytes(0).Length}] == nullptr: {(secServerBuffer.pvBuffer == IntPtr.Zero ? "YES" : "NO")}");
-
-        Console.Out.WriteLine($"  >> [ret] 0x{result:X8}");
         return (int) result;
     }
 
@@ -69,7 +53,6 @@ public unsafe class LocalNegotiator
         if (secServerBuffer.pvBuffer != IntPtr.Zero && secServerBuffer.cbBuffer != 0)
             Marshal.Copy(secServerBuffer.pvBuffer, newNtlmBytes, 0, (int) secServerBuffer.cbBuffer);
 
-        Console.WriteLine($"  >> secServerBuffer.pvBuffer[{secServerBuffer.cbBuffer}] == nullptr: {(secServerBuffer.pvBuffer == IntPtr.Zero ? "YES" : "NO")}");
         if (length >= secServerBuffer.cbBuffer)
         {
             for (int i = 0; i < length; i++)
@@ -92,7 +75,6 @@ public unsafe class LocalNegotiator
     {
         var tempData = new byte[length];
         Marshal.Copy((IntPtr) data, tempData, 0, length);
-        Console.Out.WriteLine($" > {string.Join("", tempData.Select(a => $"{a:X2}"))} < ");
 
         secClientBuffer = new SecBuffer(tempData, SecBufferType.SECBUFFER_TOKEN);
         secClientBufferDesc = new SecBufferDesc(secClientBuffer);
@@ -100,12 +82,8 @@ public unsafe class LocalNegotiator
         secServerBuffer = new SecBuffer {BufferType = (uint) SecBufferType.SECBUFFER_TOKEN};
         secServerBufferDesc = new SecBufferDesc(secServerBuffer);
 
-        Console.WriteLine($"  >> [PRE] secServerBuffer.pvBuffer[{secServerBuffer.cbBuffer}] == nullptr: {(secServerBuffer.pvBuffer == IntPtr.Zero ? "YES" : "NO")}");
         AuthResult = (int) AcceptSecurityContext(ref context, ref context, ref secClientBufferDesc, ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_CONNECTION,
             SECURITY_NATIVE_DREP, ref context, ref secServerBufferDesc, out _, out _);
-        Console.WriteLine($"  >> [POST] secServerBuffer.pvBuffer[{secServerBuffer.cbBuffer}] == nullptr: {(secServerBuffer.pvBuffer == IntPtr.Zero ? "YES" : "NO")}");
-
-        Console.Out.WriteLine("AuthResult: " + AuthResult);
 
         return AuthResult;
     }
