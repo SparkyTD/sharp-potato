@@ -1,5 +1,5 @@
 # SharpPotato
-A fully managed C# implementation of JuicyPotato
+A fully managed C# implementation of [JuicyPotato](https://github.com/ohpe/juicy-potato)
 
 ### Project Status / TODO
 - [x] CreateProcessWithTokenW
