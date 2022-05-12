@@ -78,7 +78,7 @@ public class LocalNegotiator
 
         AuthResult = (int) AcceptSecurityContext(ref context, ref context, ref secClientBufferDesc, ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_CONNECTION,
             SECURITY_NATIVE_DREP, ref context, ref secServerBufferDesc, out _, out _);
-
+        
         return data;
     }
 }

