@@ -9,8 +9,10 @@ A fully managed C# implementation of [JuicyPotato](https://ohpe.it/juicy-potato/
 - [x] Custom Process (currently hard-coded to cmd.exe)
 - [x] Custom CmdLine Arguments
 - [x] Custom RPC Server Address/Port
-- [ ] Error checking
+- [ ] Error checking and custom Exceptions
 - [ ] Stream redirection (stdout, stderr, stdin)
+- [ ] Asynchronous COM/RPC socket I/O
+- [ ] Reliability (packet 72 fix)
 
 ### Example Usage
 The following code will start a `cmd.exe` process as `nt authority\system`.
