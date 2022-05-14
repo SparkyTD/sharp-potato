@@ -1,6 +1,8 @@
 # SharpPotato
 A fully managed C# implementation of [JuicyPotato](https://ohpe.it/juicy-potato/)
 
+Note that this is currently just a library, not a command-line executable tool. You'll have to write your own CLI wrapper around the `JuicyPotato` or `SystemProcess` classes.
+
 ### Project Status / TODO
 - [x] CreateProcessWithTokenW
 - [ ] CreateProcessAsUserW
