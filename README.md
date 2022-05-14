@@ -12,7 +12,7 @@ Note that this is currently just a library, not a command-line executable tool. 
 - [x] Custom CmdLine Arguments
 - [x] Custom RPC Server Address/Port
 - [ ] Error checking and custom Exceptions
-- [ ] Stream redirection (stdout, stderr, stdin)
+- [x] Stream redirection (stdout, stderr, stdin)
 - [ ] Asynchronous COM/RPC socket I/O
 - [ ] Reliability (packet 72 fix)
 
@@ -26,3 +26,5 @@ process.StartInfo.Arguments = "/K whoami";
 process.Start();
 process.WaitForExit();
 ```
+
+You can use the `SystemProcess` class as you would use a regular `Process` class. Some `ProcessStartInfo` features are supported, such as RedirectStandardInput/Output/Error, CreateNoConsole, and custom filename or command line arguments. If you redirect the standard streams, you can use the `StandardInput`, `StandardOutput` and `StandardError` interfaces of the `SystemProcess` class to interact with the process.
