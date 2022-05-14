@@ -8,15 +8,19 @@ using static Vanara.PInvoke.AdvApi32;
 using static Vanara.PInvoke.Kernel32;
 using static Vanara.PInvoke.Secur32;
 
+
+
 var process = new SystemProcess();
 process.StartInfo.FileName = "cmd.exe";
 process.StartInfo.Arguments = "/K whoami";
-process.StartInfo.RedirectStandardOutput = true;
-process.StartInfo.RedirectStandardError = true;
-process.StartInfo.RedirectStandardInput = true;
-process.StartInfo.CreateNoWindow = true;
+//process.StartInfo.RedirectStandardOutput = true;
+//process.StartInfo.RedirectStandardError = true;
+//process.StartInfo.RedirectStandardInput = true;
+//process.StartInfo.CreateNoWindow = true; 
 
 process.Start();
+
+Console.ReadLine();
 
 new Thread(() =>
 {
@@ -38,10 +42,11 @@ new Thread(() =>
     }
 }).Start();
 
-while (true)
+while (!process.HasExited)
 {
     var line = Console.ReadLine();
     process.StandardInput.WriteLine(line);
 }
 
 Console.Out.WriteLine("Exited");
+Environment.Exit(0);

@@ -35,4 +35,6 @@ public class RpcClient
 
         newConnection = false;
     }
+
+    public void Close() => client.Close();
 }

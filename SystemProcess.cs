@@ -21,10 +21,11 @@ public class SystemProcess
     public StreamReader StandardError { get; private set; }
     public StreamWriter StandardInput { get; private set; }
 
-    private PipeStream standardOutputStream = null;
-    private PipeStream standardErrorStream = null;
-    private PipeStream standardInputStream = null;
+    private PipeStream standardOutputStream;
+    private PipeStream standardErrorStream;
+    private PipeStream standardInputStream;
     public int Id => (int) processInformation.dwProcessId;
+    public bool HasExited => QueryHasExited();
 
     private SafePROCESS_INFORMATION processInformation;
 
@@ -36,7 +37,6 @@ public class SystemProcess
         potato.CLSID = CLSID;
 
         potato.StartCOMListenerThread();
-        potato.StartRPCConnectionThread();
         potato.TriggerDCOM();
         potato.WaitForAuth();
 
@@ -77,6 +77,14 @@ public class SystemProcess
         }
 
         processInformation = potato.CreateProcess(startupInfo);
+    }
+
+    private bool QueryHasExited()
+    {
+        if (GetExitCodeProcess(processInformation.hProcess, out var exitCode))
+            return exitCode != NTStatus.STATUS_PENDING;
+
+        throw new Exception("Unable to determine whether the process has exited or not.");
     }
 
     public void WaitForExit() => WaitForSingleObject(processInformation.hProcess, INFINITE);
